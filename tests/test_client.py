@@ -1,6 +1,7 @@
 """Tests for the FunASR client."""
 
 import json
+import signal
 import subprocess
 import tempfile
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -144,8 +145,27 @@ def test_stop_graceful():
     assert c._process is None
 
 
-def test_stop_force_kill():
-    """stop() force-kills when process doesn't exit gracefully."""
+def test_stop_force_kill_windows():
+    """stop() calls terminate() on Windows when process doesn't exit."""
+    c = FunASR()
+    mock_proc = MagicMock()
+    mock_proc.wait.side_effect = [subprocess.TimeoutExpired("cmd", 5), None]
+    c._process = mock_proc
+
+    with patch.object(c, "_rpc_call"), \
+         patch("platform.system", return_value="Windows"):
+        c.stop()
+
+    mock_proc.terminate.assert_called_once()
+    assert c._process is None
+
+
+@pytest.mark.skipif(
+    not hasattr(signal, "SIGKILL"),
+    reason="SIGKILL only available on Unix",
+)
+def test_stop_force_kill_unix():
+    """stop() sends SIGKILL on Unix when process doesn't exit."""
     c = FunASR()
     mock_proc = MagicMock()
     mock_proc.wait.side_effect = [subprocess.TimeoutExpired("cmd", 5), None]
@@ -155,7 +175,7 @@ def test_stop_force_kill():
          patch("platform.system", return_value="Linux"):
         c.stop()
 
-    mock_proc.send_signal.assert_called_once()
+    mock_proc.send_signal.assert_called_once_with(signal.SIGKILL)
     assert c._process is None
 
 
