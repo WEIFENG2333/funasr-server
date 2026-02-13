@@ -6,7 +6,7 @@ These tests actually:
 3. Load real models and run inference
 4. Verify results
 
-Requires: internet connection, ~2GB disk space, ~5 minutes.
+Requires: internet connection, ~2GB disk space, ~10 minutes.
 
 Run with:
     pytest tests/test_integration.py -v -s
@@ -15,7 +15,6 @@ Skip in normal CI (these are marked with @pytest.mark.integration).
 """
 
 import math
-import os
 import struct
 import tempfile
 import wave
@@ -24,9 +23,6 @@ from pathlib import Path
 import pytest
 
 from funasr_server import FunASR
-
-# Use HuggingFace in CI (GitHub Actions), ModelScope locally (China)
-_HUB = "hf" if os.environ.get("CI") else "ms"
 
 
 # Mark all tests in this module as integration tests
@@ -83,12 +79,9 @@ class TestLifecycle:
     def test_ensure_installed(self, runtime_dir):
         """Runtime environment can be installed."""
         asr = FunASR(runtime_dir=runtime_dir)
-        # Should already be installed by the client fixture, or install now
         result = asr.ensure_installed()
-        # True = already installed, False = just installed. Both are ok.
         assert isinstance(result, bool)
 
-        # Verify files exist
         rt = Path(runtime_dir)
         assert (rt / ".venv").exists()
         assert (rt / "pyproject.toml").exists()
@@ -114,7 +107,6 @@ class TestVADModel:
         result = client.load_model(
             model="iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
             name="vad",
-            hub=_HUB,
         )
         assert result["status"] == "loaded"
         assert result["name"] == "vad"
@@ -126,17 +118,14 @@ class TestVADModel:
         assert isinstance(result, list)
         assert len(result) > 0
 
-        # VAD returns [{"key": ..., "value": [[start_ms, end_ms], ...]}]
         first = result[0]
         assert "key" in first
         assert "value" in first
 
         segments = first["value"]
         assert isinstance(segments, list)
-        # Should detect at least one segment in our 2-second tone
         assert len(segments) > 0
 
-        # Each segment is [start_ms, end_ms]
         for seg in segments:
             assert len(seg) == 2
             assert seg[0] >= 0
@@ -161,7 +150,6 @@ class TestVADModel:
         result = client.unload_model(name="vad")
         assert result["status"] == "unloaded"
 
-        # Verify it's gone
         models = client.list_models()
         assert "vad" not in models["models"]
 
@@ -174,7 +162,6 @@ class TestASRModel:
         result = client.load_model(
             model="iic/SenseVoiceSmall",
             name="asr",
-            hub=_HUB,
         )
         assert result["status"] == "loaded"
         assert result["name"] == "asr"
