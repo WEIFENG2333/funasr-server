@@ -1,0 +1,43 @@
+[project]
+name = "funasr-server"
+version = "0.1.0"
+description = "Self-contained FunASR inference server with one-click installation"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "WEIFENG2333" },
+]
+keywords = ["asr", "speech-recognition", "funasr", "inference-server"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/WEIFENG2333/funasr-server"
+Repository = "https://github.com/WEIFENG2333/funasr-server"
+Issues = "https://github.com/WEIFENG2333/funasr-server/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/funasr_server"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
