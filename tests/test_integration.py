@@ -161,6 +161,54 @@ class TestVADModel:
         assert "vad" not in models["models"]
 
 
+class TestASRModel:
+    """Test with SenseVoiceSmall (~450MB)."""
+
+    def test_load_asr_model(self, client):
+        """Load SenseVoiceSmall ASR model."""
+        result = client.load_model(
+            model="iic/SenseVoiceSmall",
+            name="asr",
+        )
+        assert result["status"] == "loaded"
+        assert result["name"] == "asr"
+
+    def test_infer_asr(self, client, test_audio):
+        """ASR inference returns transcription text."""
+        result = client.infer(input=test_audio, name="asr")
+
+        assert isinstance(result, list)
+        assert len(result) > 0
+
+        first = result[0]
+        assert "key" in first
+        assert "text" in first
+        assert isinstance(first["text"], str)
+        assert len(first["text"]) > 0
+
+    def test_infer_asr_with_bytes(self, client, test_audio):
+        """ASR inference works with audio bytes input."""
+        audio_bytes = Path(test_audio).read_bytes()
+        result = client.infer(input_bytes=audio_bytes, name="asr")
+
+        assert isinstance(result, list)
+        assert len(result) > 0
+        assert "text" in result[0]
+
+    def test_transcribe_alias(self, client, test_audio):
+        """transcribe() works as alias for infer()."""
+        result = client.transcribe(audio=test_audio, name="asr")
+
+        assert isinstance(result, list)
+        assert len(result) > 0
+        assert "text" in result[0]
+
+    def test_unload_asr(self, client):
+        """Unload ASR model."""
+        result = client.unload_model(name="asr")
+        assert result["status"] == "unloaded"
+
+
 class TestExecute:
     """Test arbitrary code execution."""
 

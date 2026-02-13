@@ -1,7 +1,12 @@
 name: Integration Tests
 
 on:
-  workflow_dispatch:  # Manual trigger from GitHub UI
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   integration:
