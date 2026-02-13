@@ -36,6 +36,9 @@ packages = ["src/funasr_server"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: real environment installation and model inference (slow, needs internet)",
+]
 
 [project.optional-dependencies]
 dev = [

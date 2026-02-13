@@ -1,0 +1,27 @@
+name: Integration Tests
+
+on:
+  workflow_dispatch:  # Manual trigger from GitHub UI
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Install package and test dependencies
+        run: |
+          pip install -e .
+          pip install pytest
+
+      - name: Run integration tests
+        run: python -m pytest tests/test_integration.py -v -s -m integration

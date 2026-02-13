@@ -28,4 +28,4 @@ jobs:
           pip install pytest
 
       - name: Run tests
-        run: python -m pytest tests/ -v
+        run: python -m pytest tests/ -v -m "not integration"
