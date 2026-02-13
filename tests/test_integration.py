@@ -15,6 +15,7 @@ Skip in normal CI (these are marked with @pytest.mark.integration).
 """
 
 import math
+import os
 import struct
 import tempfile
 import wave
@@ -23,6 +24,9 @@ from pathlib import Path
 import pytest
 
 from funasr_server import FunASR
+
+# Use HuggingFace in CI (GitHub Actions), ModelScope locally (China)
+_HUB = "hf" if os.environ.get("CI") else "ms"
 
 
 # Mark all tests in this module as integration tests
@@ -110,6 +114,7 @@ class TestVADModel:
         result = client.load_model(
             model="iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
             name="vad",
+            hub=_HUB,
         )
         assert result["status"] == "loaded"
         assert result["name"] == "vad"
@@ -169,6 +174,7 @@ class TestASRModel:
         result = client.load_model(
             model="iic/SenseVoiceSmall",
             name="asr",
+            hub=_HUB,
         )
         assert result["status"] == "loaded"
         assert result["name"] == "asr"

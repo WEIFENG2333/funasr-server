@@ -223,7 +223,7 @@ class FunASR:
             params["spk_model"] = spk_model
         if device:
             params["device"] = device
-        return self._rpc_call("load_model", params, timeout=300)
+        return self._rpc_call("load_model", params, timeout=600)
 
     def unload_model(self, name: str = "default") -> dict:
         """Unload a model and free memory."""
