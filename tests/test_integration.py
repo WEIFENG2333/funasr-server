@@ -6,6 +6,10 @@ These tests actually:
 3. Load real models and run inference
 4. Verify results
 
+Auto-detects network region:
+- China: uses ModelScope (default)
+- International: uses HuggingFace
+
 Requires: internet connection, ~2GB disk space, ~10 minutes.
 
 Run with:
@@ -23,17 +27,28 @@ from pathlib import Path
 import pytest
 
 from funasr_server import FunASR
+from funasr_server.mirror import detect_region
 
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration
 
+# Auto-detect network and choose correct hub + model IDs
+_REGION = detect_region()
+_HUB = "ms" if _REGION == "cn" else "hf"
+
+# Model IDs differ between ModelScope and HuggingFace
+# VAD: has short name "fsmn-vad" in both name_maps, so just use that
+_VAD_MODEL = "fsmn-vad"
+
+# SenseVoiceSmall: no short name in either name_maps
+# ModelScope: iic/SenseVoiceSmall
+# HuggingFace: FunAudioLLM/SenseVoiceSmall
+_ASR_MODEL = "iic/SenseVoiceSmall" if _HUB == "ms" else "FunAudioLLM/SenseVoiceSmall"
+
 
 def _generate_test_wav(path: str, duration_sec: float = 2.0, sample_rate: int = 16000):
-    """Generate a simple sine wave WAV file using only the standard library.
-
-    Creates a 440Hz tone — enough for VAD to detect speech-like activity.
-    """
+    """Generate a simple sine wave WAV file using only the standard library."""
     frequency = 440.0
     num_samples = int(duration_sec * sample_rate)
 
@@ -105,8 +120,9 @@ class TestVADModel:
     def test_load_vad_model(self, client):
         """Load the FSMN-VAD model."""
         result = client.load_model(
-            model="iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+            model=_VAD_MODEL,
             name="vad",
+            hub=_HUB,
         )
         assert result["status"] == "loaded"
         assert result["name"] == "vad"
@@ -160,8 +176,9 @@ class TestASRModel:
     def test_load_asr_model(self, client):
         """Load SenseVoiceSmall ASR model."""
         result = client.load_model(
-            model="iic/SenseVoiceSmall",
+            model=_ASR_MODEL,
             name="asr",
+            hub=_HUB,
         )
         assert result["status"] == "loaded"
         assert result["name"] == "asr"
