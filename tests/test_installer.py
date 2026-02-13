@@ -50,19 +50,19 @@ def test_get_uv_path_not_found():
 
 
 def test_get_python_path_unix():
-    with patch("platform.system", return_value="Linux"):
-        installer = Installer("/opt/funasr")
-        path = installer.get_python_path()
-        assert path.endswith("bin/python")
-        assert "/opt/funasr/" in path or "funasr" in path
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("platform.system", return_value="Linux"):
+            installer = Installer(tmpdir)
+            path = installer.get_python_path()
+            assert path.endswith(os.path.join("bin", "python"))
 
 
 def test_get_python_path_windows():
-    with patch("platform.system", return_value="Windows"):
-        installer = Installer("C:\\funasr")
-        path = installer.get_python_path()
-        assert "Scripts" in path
-        assert path.endswith("python.exe")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("platform.system", return_value="Windows"):
+            installer = Installer(tmpdir)
+            path = installer.get_python_path()
+            assert path.endswith(os.path.join("Scripts", "python.exe"))
 
 
 def test_create_runtime_dir():

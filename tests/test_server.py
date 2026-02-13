@@ -87,7 +87,8 @@ def test_rpc_load_model_already_loaded():
     server._models["m1"] = mock_model
     server._model_kwargs["m1"] = {"model": "test"}
 
-    result = server.rpc_load_model({"model": "test", "name": "m1"})
+    with patch.dict("sys.modules", {"funasr": MagicMock()}):
+        result = server.rpc_load_model({"model": "test", "name": "m1"})
     assert result["status"] == "already_loaded"
 
 

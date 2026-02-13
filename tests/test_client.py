@@ -156,10 +156,12 @@ def test_connection_error():
 
 
 def test_context_manager_init():
-    c = FunASR(runtime_dir="/tmp/test_funasr")
-    assert c.runtime_dir == Path("/tmp/test_funasr")
-    assert c.port == 0
-    assert c.host == "127.0.0.1"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_dir = Path(tmpdir) / "test_funasr"
+        c = FunASR(runtime_dir=str(test_dir))
+        assert c.runtime_dir == test_dir.resolve()
+        assert c.port == 0
+        assert c.host == "127.0.0.1"
 
 
 def test_is_running_no_process():
