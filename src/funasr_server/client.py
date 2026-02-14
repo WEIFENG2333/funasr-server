@@ -6,27 +6,20 @@ emotion, alignment, keyword spotting, etc.
 Usage:
     from funasr_server import FunASR
 
-    asr = FunASR()
-    asr.ensure_installed()
-    asr.start()
+    with FunASR() as asr:
+        # load_model() returns a Model handle
+        model = asr.load_model("SenseVoiceSmall", vad_model="fsmn-vad")
+        result = model.infer(audio="audio.wav")
+        result = model(audio="audio.wav")  # shorthand
 
-    # ASR — model name auto-resolved to correct hub
-    asr.load_model(model="SenseVoiceSmall")
-    result = asr.infer(audio="audio.wav", language="zh", use_itn=True)
+        # Multiple models
+        vad = asr.load_model("fsmn-vad")
+        punc = asr.load_model("ct-punc")
 
-    # VAD (standalone)
-    asr.load_model(model="fsmn-vad", name="vad")
-    result = asr.infer(audio="audio.wav", name="vad")
+        segments = vad(audio="audio.wav")
+        text = punc(text="你好世界今天天气真好")
 
-    # ASR + VAD pipeline
-    asr.load_model(model="SenseVoiceSmall", vad_model="fsmn-vad", name="asr_vad")
-    result = asr.infer(audio="audio.wav", name="asr_vad")
-
-    # Punctuation model
-    asr.load_model(model="ct-punc", name="punc")
-    result = asr.infer(text="你好世界今天天气真好", name="punc")
-
-    asr.stop()
+        model.unload()
 """
 
 import base64
@@ -57,6 +50,93 @@ class ServerError(Exception):
         super().__init__(message)
 
 
+class Model:
+    """Handle to a loaded model on the server.
+
+    Returned by ``FunASR.load_model()``. Provides ``infer()`` and
+    ``unload()`` without needing to pass a name string around.
+
+    Usage::
+
+        model = asr.load_model("SenseVoiceSmall", vad_model="fsmn-vad")
+        result = model.infer(audio="test.wav")
+        # or just call it directly
+        result = model(audio="test.wav")
+        model.unload()
+    """
+
+    def __init__(self, client: "FunASR", name: str):
+        self._client = client
+        self.name = name
+
+    def infer(
+        self,
+        audio: str = None,
+        text: str = None,
+        audio_bytes: bytes = None,
+        language: str = None,
+        use_itn: bool = None,
+        batch_size: int = None,
+        hotword: str = None,
+        merge_vad: bool = None,
+        merge_length_s: float = None,
+        output_timestamp: bool = None,
+        **kwargs,
+    ) -> list:
+        """Run inference on this model.
+
+        Args:
+            audio: Path to audio file.
+            text: Text string (for punctuation models).
+            audio_bytes: Raw audio bytes.
+            language: Language code (e.g. "zh", "en", "ja").
+            use_itn: Enable inverse text normalization.
+            batch_size: Inference batch size.
+            hotword: Hotword string.
+            merge_vad: Merge short VAD segments.
+            merge_length_s: Max merge length in seconds.
+            output_timestamp: Include timestamps in output.
+            **kwargs: Additional generate() parameters.
+
+        Returns:
+            List of result dicts.
+        """
+        return self._client.infer(
+            audio=audio, text=text, audio_bytes=audio_bytes,
+            name=self.name,
+            language=language, use_itn=use_itn, batch_size=batch_size,
+            hotword=hotword, merge_vad=merge_vad,
+            merge_length_s=merge_length_s, output_timestamp=output_timestamp,
+            **kwargs,
+        )
+
+    def transcribe(
+        self,
+        audio: str = None,
+        audio_bytes: bytes = None,
+        **kwargs,
+    ) -> list:
+        """Transcribe audio — convenience alias for infer()."""
+        return self.infer(audio=audio, audio_bytes=audio_bytes, **kwargs)
+
+    def unload(self) -> dict:
+        """Unload this model from the server."""
+        return self._client.unload_model(name=self.name)
+
+    def __call__(
+        self,
+        audio: str = None,
+        text: str = None,
+        audio_bytes: bytes = None,
+        **kwargs,
+    ) -> list:
+        """Shorthand for infer()."""
+        return self.infer(audio=audio, text=text, audio_bytes=audio_bytes, **kwargs)
+
+    def __repr__(self):
+        return f"Model(name={self.name!r})"
+
+
 class FunASR:
     """Client for the FunASR inference server.
 
@@ -81,6 +161,7 @@ class FunASR:
         self.installer = Installer(str(self.runtime_dir))
         self._process: Optional[subprocess.Popen] = None
         self._rpc_id = 0
+        self._model_counter = 0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -199,7 +280,7 @@ class FunASR:
     def load_model(
         self,
         model: str,
-        name: str = "default",
+        name: str = None,
         vad_model: str = None,
         punc_model: str = None,
         spk_model: str = None,
@@ -210,11 +291,15 @@ class FunASR:
         fp16: bool = None,
         disable_update: bool = None,
         **kwargs,
-    ) -> dict:
+    ) -> "Model":
         """Load any FunASR model via AutoModel.
 
-        Works with ALL model types: ASR, VAD, punctuation, speaker,
-        emotion, alignment, keyword spotting, etc.
+        Returns a ``Model`` handle that can be used for inference directly::
+
+            model = asr.load_model("SenseVoiceSmall", vad_model="fsmn-vad")
+            result = model.infer(audio="test.wav")
+            result = model(audio="test.wav")   # shorthand
+            model.unload()
 
         Model names are automatically resolved to the correct hub-specific
         ID based on the detected network region. For example,
@@ -224,7 +309,7 @@ class FunASR:
 
         Args:
             model: Model name or ID (e.g. "SenseVoiceSmall", "fsmn-vad").
-            name: Cache key for this model instance.
+            name: Server-side cache key. Auto-generated if None.
             vad_model: VAD model for ASR pipeline composition.
             punc_model: Punctuation model for ASR pipeline.
             spk_model: Speaker model for ASR pipeline.
@@ -246,8 +331,12 @@ class FunASR:
                 - spk_kwargs (dict): Extra speaker model parameters.
 
         Returns:
-            {"name": str, "status": "loaded" | "already_loaded"}
+            A ``Model`` handle for inference and lifecycle management.
         """
+        if name is None:
+            self._model_counter += 1
+            name = f"model_{self._model_counter}"
+
         if hub is None:
             hub = get_hub()
 
@@ -271,71 +360,29 @@ class FunASR:
         params["name"] = name  # always include name
         params.update(kwargs)
 
-        return self._rpc_call("load_model", params, timeout=600)
+        self._rpc_call("load_model", params, timeout=600)
+        return Model(self, name)
 
-    def unload_model(self, name: str = "default") -> dict:
-        """Unload a model and free memory."""
+    def unload_model(self, name: str) -> dict:
+        """Unload a model by name. Prefer ``model.unload()`` instead."""
         return self._rpc_call("unload_model", {"name": name})
 
     def infer(
         self,
+        name: str,
+        *,
         audio: str = None,
         text: str = None,
         audio_bytes: bytes = None,
-        name: str = "default",
-        language: str = None,
-        use_itn: bool = None,
-        batch_size: int = None,
-        hotword: str = None,
-        merge_vad: bool = None,
-        merge_length_s: float = None,
-        output_timestamp: bool = None,
         **kwargs,
     ) -> list:
-        """Universal inference — works with ANY loaded FunASR model.
+        """Run inference on a loaded model by name.
 
-        Calls model.generate(input=..., **kwargs) on the server side.
-        Provide exactly one of: audio, text, or audio_bytes.
-
-        Args:
-            audio: Path to audio file (for ASR/VAD/speaker models).
-            text: Text string (for punctuation/text models).
-            audio_bytes: Raw audio bytes (WAV/MP3/etc.).
-            name: Model cache key (default: "default").
-            language: Language code (e.g. "zh", "en", "ja").
-            use_itn: Enable inverse text normalization.
-            batch_size: Inference batch size.
-            hotword: Hotword file path or hotword string.
-            merge_vad: Merge short VAD segments.
-            merge_length_s: Max merge length in seconds.
-            output_timestamp: Include timestamps in output.
-            **kwargs: Additional generate() parameters. Common options:
-                - itn (bool): Inverse text normalization (some models).
-                - text_norm (str): Text normalization mode.
-                - batch_size_s (int): Batch size in seconds for VAD inference.
-                - data_type (str): Input data type hint.
-
-        Returns:
-            List of result dicts. Structure depends on model type:
-            - ASR: [{"key": ..., "text": ...}]
-            - VAD: [{"key": ..., "value": [[start_ms, end_ms], ...]}]
-            - Punctuation: [{"key": ..., "text": ...}]
+        Prefer ``model.infer()`` or ``model()`` instead.
         """
-        # Build generate kwargs, filtering out None values
-        named_generate = {
-            "language": language,
-            "use_itn": use_itn,
-            "batch_size": batch_size,
-            "hotword": hotword,
-            "merge_vad": merge_vad,
-            "merge_length_s": merge_length_s,
-            "output_timestamp": output_timestamp,
-        }
         params = {"name": name}
-        params.update({k: v for k, v in named_generate.items() if v is not None})
-        params.update(kwargs)
+        params.update({k: v for k, v in kwargs.items() if v is not None})
 
-        # Set input
         if audio_bytes is not None:
             params["input_base64"] = base64.b64encode(audio_bytes).decode()
         elif audio is not None:
@@ -353,32 +400,6 @@ class FunASR:
 
         result = self._rpc_call("infer", params, timeout=600)
         return result.get("results", [])
-
-    def transcribe(
-        self,
-        audio: str = None,
-        audio_bytes: bytes = None,
-        name: str = "default",
-        **kwargs,
-    ) -> list:
-        """Transcribe audio — convenience alias for infer().
-
-        Args:
-            audio: Path to audio file.
-            audio_bytes: Raw audio bytes (WAV/MP3/etc.)
-            name: Model cache key.
-            **kwargs: Additional generate() parameters
-                (language, use_itn, hotword, etc.)
-
-        Returns:
-            List of result dicts with at least "text" key.
-        """
-        return self.infer(
-            audio=audio,
-            audio_bytes=audio_bytes,
-            name=name,
-            **kwargs,
-        )
 
     def execute(self, code: str, return_var: str = "result", **kwargs) -> dict:
         """Execute arbitrary Python code in the server environment.
