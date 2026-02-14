@@ -3,10 +3,11 @@ name = "funasr-server-runtime"
 version = "0.1.0"
 requires-python = ">=3.10,<3.13"
 dependencies = [
-    "funasr>=1.3.0",
+    "funasr @ git+https://github.com/modelscope/FunASR.git",
     "modelscope",
     "huggingface_hub",
     "transformers",
+    "tiktoken",
     "torch>=2.0.0",
     "torchaudio>=2.0.0",
     "uvicorn>=0.30.0",

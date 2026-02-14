@@ -228,7 +228,6 @@ class TestASRModel:
         assert result["status"] == "unloaded"
 
 
-@pytest.mark.skip(reason="Fun-ASR-Nano requires funasr version with FunASRNano registered")
 class TestNanoModel:
     """Test with Fun-ASR-Nano (~800M params)."""
 
