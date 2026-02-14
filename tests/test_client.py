@@ -29,8 +29,11 @@ class MockRPCHandler(BaseHTTPRequestHandler):
             result = {"status": "ok", "loaded_models": [], "device": "cpu", "cuda_available": False}
         elif method == "load_model":
             result = {"name": params.get("name", "default"), "status": "loaded",
+                       "model": params.get("model"),
                        "hub": params.get("hub"), "device": params.get("device"),
-                       "vad_model": params.get("vad_model")}
+                       "vad_model": params.get("vad_model"),
+                       "punc_model": params.get("punc_model"),
+                       "spk_model": params.get("spk_model")}
             result = {k: v for k, v in result.items() if v is not None}
             result["status"] = "loaded"
         elif method == "unload_model":
@@ -226,28 +229,62 @@ def test_health(client):
 
 
 def test_load_model(client):
-    result = client.load_model(model="test-model")
+    with patch("funasr_server.client.get_hub", return_value="ms"):
+        result = client.load_model(model="test-model")
     assert result["status"] == "loaded"
     assert result["name"] == "default"
 
 
 def test_load_model_with_name(client):
-    result = client.load_model(model="test-model", name="my_model")
+    with patch("funasr_server.client.get_hub", return_value="ms"):
+        result = client.load_model(model="test-model", name="my_model")
     assert result["name"] == "my_model"
 
 
-def test_load_model_with_kwargs(client):
-    """Extra kwargs (hub, device, etc.) are passed through."""
-    result = client.load_model(model="test-model", hub="hf", device="cpu")
-    assert result["status"] == "loaded"
+def test_load_model_auto_resolves_model_id(client):
+    """load_model automatically resolves model name to hub-specific ID."""
+    with patch("funasr_server.client.get_hub", return_value="hf"):
+        result = client.load_model(model="SenseVoiceSmall")
+    assert result["model"] == "FunAudioLLM/SenseVoiceSmall"
     assert result["hub"] == "hf"
-    assert result["device"] == "cpu"
 
 
-def test_load_model_with_vad_model(client):
-    """vad_model parameter is passed through."""
-    result = client.load_model(model="test-model", vad_model="fsmn-vad")
+def test_load_model_auto_resolves_ms(client):
+    """load_model resolves to ModelScope ID when hub=ms."""
+    with patch("funasr_server.client.get_hub", return_value="ms"):
+        result = client.load_model(model="SenseVoiceSmall")
+    assert result["model"] == "iic/SenseVoiceSmall"
+    assert result["hub"] == "ms"
+
+
+def test_load_model_explicit_hub(client):
+    """Explicit hub parameter overrides auto-detection."""
+    result = client.load_model(model="SenseVoiceSmall", hub="hf")
+    assert result["model"] == "FunAudioLLM/SenseVoiceSmall"
+    assert result["hub"] == "hf"
+
+
+def test_load_model_resolves_vad_model(client):
+    """vad_model is also resolved through the model registry."""
+    result = client.load_model(model="SenseVoiceSmall", vad_model="fsmn-vad", hub="hf")
     assert result["vad_model"] == "fsmn-vad"
+
+
+def test_load_model_resolves_sub_models(client):
+    """punc_model and spk_model are also resolved."""
+    result = client.load_model(
+        model="SenseVoiceSmall",
+        punc_model="ct-punc",
+        spk_model="cam++",
+        hub="ms",
+    )
+    assert result["punc_model"] == "ct-punc"
+    assert result["spk_model"] == "cam++"
+
+
+def test_load_model_with_device(client):
+    result = client.load_model(model="test-model", device="cpu", hub="ms")
+    assert result["device"] == "cpu"
 
 
 def test_unload_model(client):

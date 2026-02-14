@@ -10,17 +10,17 @@ Usage:
     asr.ensure_installed()
     asr.start()
 
-    # ASR
-    asr.load_model(model="iic/SenseVoiceSmall")
+    # ASR — model name auto-resolved to correct hub
+    asr.load_model(model="SenseVoiceSmall")
     result = asr.infer("audio.wav", language="zh", use_itn=True)
 
     # VAD (standalone)
     asr.load_model(model="fsmn-vad", name="vad")
     result = asr.infer("audio.wav", name="vad")
 
-    # Punctuation (text input)
-    asr.load_model(model="ct-punc", name="punc")
-    result = asr.infer("hello world", name="punc")
+    # ASR + VAD pipeline
+    asr.load_model(model="SenseVoiceSmall", vad_model="fsmn-vad", name="asr_vad")
+    result = asr.infer("audio.wav", name="asr_vad")
 
     asr.stop()
 """
@@ -39,6 +39,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from funasr_server.installer import Installer
+from funasr_server.mirror import get_hub
+from funasr_server.models import resolve_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +200,7 @@ class FunASR:
         punc_model: str = None,
         spk_model: str = None,
         device: str = None,
+        hub: str = None,
         **kwargs,
     ) -> dict:
         """Load any FunASR model via AutoModel.
@@ -205,22 +208,35 @@ class FunASR:
         Works with ALL model types: ASR, VAD, punctuation, speaker,
         emotion, alignment, keyword spotting, etc.
 
+        Model names are automatically resolved to the correct hub-specific
+        ID based on the detected network region. For example,
+        ``load_model(model="SenseVoiceSmall")`` will automatically use
+        ``iic/SenseVoiceSmall`` in China or ``FunAudioLLM/SenseVoiceSmall``
+        internationally.
+
         Args:
-            model: Model ID (e.g. "iic/SenseVoiceSmall", "fsmn-vad", "ct-punc")
+            model: Model name or ID (e.g. "SenseVoiceSmall", "fsmn-vad", "ct-punc")
             name: Cache key for this model instance.
             vad_model: VAD model ID (only for ASR pipeline composition).
             punc_model: Punctuation model ID (only for ASR pipeline).
             spk_model: Speaker model ID (only for ASR pipeline).
             device: "cuda" / "cpu" / None (auto).
+            hub: "ms" (ModelScope) / "hf" (HuggingFace) / None (auto-detect).
             **kwargs: Additional AutoModel parameters.
         """
-        params = {"model": model, "name": name, **kwargs}
+        if hub is None:
+            hub = get_hub()
+
+        resolved_model = resolve_model_id(model, hub=hub)
+        logger.info(f"Resolved model '{model}' → '{resolved_model}' (hub={hub})")
+
+        params = {"model": resolved_model, "name": name, "hub": hub, **kwargs}
         if vad_model:
-            params["vad_model"] = vad_model
+            params["vad_model"] = resolve_model_id(vad_model, hub=hub)
         if punc_model:
-            params["punc_model"] = punc_model
+            params["punc_model"] = resolve_model_id(punc_model, hub=hub)
         if spk_model:
-            params["spk_model"] = spk_model
+            params["spk_model"] = resolve_model_id(spk_model, hub=hub)
         if device:
             params["device"] = device
         return self._rpc_call("load_model", params, timeout=600)
