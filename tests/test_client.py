@@ -28,18 +28,14 @@ class MockRPCHandler(BaseHTTPRequestHandler):
         if method == "health":
             result = {"status": "ok", "loaded_models": [], "device": "cpu", "cuda_available": False}
         elif method == "load_model":
-            result = {"name": params.get("name", "default"), "status": "loaded",
-                       "model": params.get("model"),
-                       "hub": params.get("hub"), "device": params.get("device"),
-                       "vad_model": params.get("vad_model"),
-                       "punc_model": params.get("punc_model"),
-                       "spk_model": params.get("spk_model")}
-            result = {k: v for k, v in result.items() if v is not None}
+            # Echo back all params so tests can verify what was sent
+            result = dict(params)
             result["status"] = "loaded"
         elif method == "unload_model":
             result = {"name": params.get("name", "default"), "status": "unloaded"}
         elif method == "infer":
-            result = {"results": [{"key": "test", "text": "hello world"}]}
+            # Echo back params + results
+            result = {"results": [{"key": "test", "text": "hello world"}], "params_echo": params}
         elif method == "transcribe":
             result = {"results": [{"key": "test", "text": "hello world"}]}
         elif method == "list_models":
@@ -54,6 +50,22 @@ class MockRPCHandler(BaseHTTPRequestHandler):
             return
         elif method == "error_with_data":
             resp = {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32000, "message": "test error", "data": "traceback info"}}
+            self._send_json(resp)
+            return
+        elif method == "bad_jsonrpc":
+            resp = {"jsonrpc": "1.0", "id": req_id, "result": {}}
+            self._send_json(resp)
+            return
+        elif method == "bad_id":
+            resp = {"jsonrpc": "2.0", "id": 999999, "result": {}}
+            self._send_json(resp)
+            return
+        elif method == "no_result":
+            resp = {"jsonrpc": "2.0", "id": req_id}
+            self._send_json(resp)
+            return
+        elif method == "malformed_error":
+            resp = {"jsonrpc": "2.0", "id": req_id, "error": "not a dict"}
             self._send_json(resp)
             return
         else:
@@ -218,7 +230,7 @@ def test_start_already_running():
 
 
 # ------------------------------------------------------------------
-# RPC API via mock server
+# RPC API via mock server — load_model
 # ------------------------------------------------------------------
 
 def test_health(client):
@@ -287,38 +299,120 @@ def test_load_model_with_device(client):
     assert result["device"] == "cpu"
 
 
-def test_unload_model(client):
-    result = client.unload_model()
-    assert result["status"] == "unloaded"
+def test_load_model_with_batch_size(client):
+    """batch_size named param is sent to server."""
+    result = client.load_model(model="test-model", batch_size=4, hub="ms")
+    assert result["batch_size"] == 4
 
 
-def test_unload_model_by_name(client):
-    result = client.unload_model(name="my_model")
-    assert result["name"] == "my_model"
-    assert result["status"] == "unloaded"
+def test_load_model_with_fp16(client):
+    """fp16 named param is sent to server."""
+    result = client.load_model(model="test-model", fp16=True, hub="ms")
+    assert result["fp16"] is True
 
 
-def test_infer(client):
-    result = client.infer(input="test.wav")
+def test_load_model_with_quantize(client):
+    """quantize named param is sent to server."""
+    result = client.load_model(model="test-model", quantize=True, hub="ms")
+    assert result["quantize"] is True
+
+
+def test_load_model_with_disable_update(client):
+    """disable_update named param is sent to server."""
+    result = client.load_model(model="test-model", disable_update=True, hub="ms")
+    assert result["disable_update"] is True
+
+
+def test_load_model_none_params_not_sent(client):
+    """None params should NOT be included in params sent to server."""
+    result = client.load_model(model="test-model", hub="ms")
+    # batch_size, fp16, quantize etc. should not be in result since they were None
+    assert "batch_size" not in result
+    assert "fp16" not in result
+    assert "quantize" not in result
+    assert "disable_update" not in result
+    assert "device" not in result
+    assert "vad_model" not in result
+    assert "punc_model" not in result
+    assert "spk_model" not in result
+
+
+def test_load_model_kwargs_passed_through(client):
+    """Extra **kwargs are forwarded to the server."""
+    result = client.load_model(
+        model="test-model",
+        hub="ms",
+        trust_remote_code=True,
+        ncpu=4,
+    )
+    assert result["trust_remote_code"] is True
+    assert result["ncpu"] == 4
+
+
+# ------------------------------------------------------------------
+# RPC API via mock server — infer
+# ------------------------------------------------------------------
+
+def test_infer_audio(client):
+    """infer(audio=...) sends file path as 'input'."""
+    result = client.infer(audio="test.wav")
     assert len(result) == 1
     assert result[0]["text"] == "hello world"
 
 
-def test_infer_with_bytes(client):
-    result = client.infer(input_bytes=b"fake audio data")
+def test_infer_text(client):
+    """infer(text=...) sends text string as 'input'."""
+    result = client.infer(text="你好世界")
+    assert len(result) == 1
+    assert result[0]["text"] == "hello world"
+
+
+def test_infer_audio_bytes(client):
+    """infer(audio_bytes=...) sends base64-encoded data."""
+    result = client.infer(audio_bytes=b"fake audio data")
     assert len(result) == 1
 
 
 def test_infer_with_name(client):
     """infer() passes model name."""
-    result = client.infer(input="test.wav", name="vad")
+    result = client.infer(audio="test.wav", name="vad")
     assert len(result) == 1
 
 
 def test_infer_no_input(client):
-    with pytest.raises(ValueError, match="Either 'input' or 'input_bytes'"):
+    """infer() raises when no input is provided."""
+    with pytest.raises(ValueError, match="Provide exactly one of"):
         client.infer()
 
+
+def test_infer_with_language(client):
+    """infer(language=...) sends language param."""
+    result = client.infer(audio="test.wav", language="zh")
+    assert len(result) == 1
+
+
+def test_infer_with_use_itn(client):
+    """infer(use_itn=...) sends use_itn param."""
+    result = client.infer(audio="test.wav", use_itn=True)
+    assert len(result) == 1
+
+
+def test_infer_with_hotword(client):
+    """infer(hotword=...) sends hotword param."""
+    result = client.infer(audio="test.wav", hotword="test hotword")
+    assert len(result) == 1
+
+
+def test_infer_none_generate_params_not_sent(client):
+    """None generate params should not be included."""
+    # This test verifies via the mock server echo — no extra params
+    result = client.infer(audio="test.wav")
+    assert len(result) == 1
+
+
+# ------------------------------------------------------------------
+# RPC API via mock server — transcribe
+# ------------------------------------------------------------------
 
 def test_transcribe(client):
     result = client.transcribe(audio="test.wav")
@@ -332,8 +426,23 @@ def test_transcribe_with_bytes(client):
 
 
 def test_transcribe_no_input(client):
-    with pytest.raises(ValueError, match="Either 'input' or 'input_bytes'"):
+    with pytest.raises(ValueError, match="Provide exactly one of"):
         client.transcribe()
+
+
+# ------------------------------------------------------------------
+# RPC API via mock server — other methods
+# ------------------------------------------------------------------
+
+def test_unload_model(client):
+    result = client.unload_model()
+    assert result["status"] == "unloaded"
+
+
+def test_unload_model_by_name(client):
+    result = client.unload_model(name="my_model")
+    assert result["name"] == "my_model"
+    assert result["status"] == "unloaded"
 
 
 def test_list_models(client):
@@ -346,19 +455,30 @@ def test_execute(client):
     assert result["output"] == "ok"
 
 
-def test_download_model(client):
-    result = client.download_model(model="iic/SenseVoiceSmall")
+def test_download_model_auto_hub(client):
+    """download_model auto-detects hub when hub=None."""
+    with patch("funasr_server.client.get_hub", return_value="hf"):
+        result = client.download_model(model="SenseVoiceSmall")
+    assert result["hub"] == "hf"
+    assert result["model"] == "FunAudioLLM/SenseVoiceSmall"
+
+
+def test_download_model_auto_hub_ms(client):
+    """download_model auto-detects hub=ms in China."""
+    with patch("funasr_server.client.get_hub", return_value="ms"):
+        result = client.download_model(model="SenseVoiceSmall")
+    assert result["hub"] == "ms"
     assert result["model"] == "iic/SenseVoiceSmall"
-    assert result["path"] == "/tmp/model"
 
 
-def test_download_model_with_hub(client):
+def test_download_model_explicit_hub(client):
+    """download_model with explicit hub."""
     result = client.download_model(model="test-model", hub="hf")
     assert result["hub"] == "hf"
 
 
 # ------------------------------------------------------------------
-# Error handling
+# Error handling — JSON-RPC validation
 # ------------------------------------------------------------------
 
 def test_server_error(client):
@@ -395,3 +515,27 @@ def test_rpc_id_increments(client):
     assert client._rpc_id == initial + 1
     client.health()
     assert client._rpc_id == initial + 2
+
+
+def test_rpc_rejects_bad_jsonrpc_version(client):
+    """Response with wrong jsonrpc version raises ConnectionError."""
+    with pytest.raises(ConnectionError, match="jsonrpc='2.0'"):
+        client._rpc_call("bad_jsonrpc", {})
+
+
+def test_rpc_rejects_mismatched_id(client):
+    """Response with wrong ID raises ConnectionError."""
+    with pytest.raises(ConnectionError, match="ID mismatch"):
+        client._rpc_call("bad_id", {})
+
+
+def test_rpc_rejects_missing_result(client):
+    """Response without 'result' or 'error' raises ConnectionError."""
+    with pytest.raises(ConnectionError, match="missing 'result'"):
+        client._rpc_call("no_result", {})
+
+
+def test_rpc_rejects_malformed_error(client):
+    """Malformed error object (not a dict) raises ConnectionError."""
+    with pytest.raises(ConnectionError, match="Malformed JSON-RPC error"):
+        client._rpc_call("malformed_error", {})

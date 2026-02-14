@@ -12,15 +12,19 @@ Usage:
 
     # ASR — model name auto-resolved to correct hub
     asr.load_model(model="SenseVoiceSmall")
-    result = asr.infer("audio.wav", language="zh", use_itn=True)
+    result = asr.infer(audio="audio.wav", language="zh", use_itn=True)
 
     # VAD (standalone)
     asr.load_model(model="fsmn-vad", name="vad")
-    result = asr.infer("audio.wav", name="vad")
+    result = asr.infer(audio="audio.wav", name="vad")
 
     # ASR + VAD pipeline
     asr.load_model(model="SenseVoiceSmall", vad_model="fsmn-vad", name="asr_vad")
-    result = asr.infer("audio.wav", name="asr_vad")
+    result = asr.infer(audio="audio.wav", name="asr_vad")
+
+    # Punctuation model
+    asr.load_model(model="ct-punc", name="punc")
+    result = asr.infer(text="你好世界今天天气真好", name="punc")
 
     asr.stop()
 """
@@ -201,6 +205,10 @@ class FunASR:
         spk_model: str = None,
         device: str = None,
         hub: str = None,
+        batch_size: int = None,
+        quantize: bool = None,
+        fp16: bool = None,
+        disable_update: bool = None,
         **kwargs,
     ) -> dict:
         """Load any FunASR model via AutoModel.
@@ -215,30 +223,54 @@ class FunASR:
         internationally.
 
         Args:
-            model: Model name or ID (e.g. "SenseVoiceSmall", "fsmn-vad", "ct-punc")
+            model: Model name or ID (e.g. "SenseVoiceSmall", "fsmn-vad").
             name: Cache key for this model instance.
-            vad_model: VAD model ID (only for ASR pipeline composition).
-            punc_model: Punctuation model ID (only for ASR pipeline).
-            spk_model: Speaker model ID (only for ASR pipeline).
-            device: "cuda" / "cpu" / None (auto).
+            vad_model: VAD model for ASR pipeline composition.
+            punc_model: Punctuation model for ASR pipeline.
+            spk_model: Speaker model for ASR pipeline.
+            device: "cuda" / "cpu" / None (auto-detect).
             hub: "ms" (ModelScope) / "hf" (HuggingFace) / None (auto-detect).
-            **kwargs: Additional AutoModel parameters.
+            batch_size: Inference batch size.
+            quantize: Enable model quantization.
+            fp16: Enable half-precision inference.
+            disable_update: Skip model update checks on startup.
+            **kwargs: Additional AutoModel parameters. Common options:
+                - ncpu (int): Number of CPU threads.
+                - ngpu (int): Number of GPUs.
+                - seed (int): Random seed.
+                - trust_remote_code (bool): Allow remote code execution.
+                - remote_code (str): Path to custom model code.
+                - model_revision (str): Model version string.
+                - vad_kwargs (dict): Extra VAD model parameters.
+                - punc_kwargs (dict): Extra punctuation model parameters.
+                - spk_kwargs (dict): Extra speaker model parameters.
+
+        Returns:
+            {"name": str, "status": "loaded" | "already_loaded"}
         """
         if hub is None:
             hub = get_hub()
 
         resolved_model = resolve_model_id(model, hub=hub)
-        logger.info(f"Resolved model '{model}' → '{resolved_model}' (hub={hub})")
+        logger.info(f"Resolved model '{model}' -> '{resolved_model}' (hub={hub})")
 
-        params = {"model": resolved_model, "name": name, "hub": hub, **kwargs}
-        if vad_model:
-            params["vad_model"] = resolve_model_id(vad_model, hub=hub)
-        if punc_model:
-            params["punc_model"] = resolve_model_id(punc_model, hub=hub)
-        if spk_model:
-            params["spk_model"] = resolve_model_id(spk_model, hub=hub)
-        if device:
-            params["device"] = device
+        # Build params, filtering out None values from named params
+        named = {
+            "model": resolved_model,
+            "hub": hub,
+            "vad_model": resolve_model_id(vad_model, hub=hub) if vad_model else None,
+            "punc_model": resolve_model_id(punc_model, hub=hub) if punc_model else None,
+            "spk_model": resolve_model_id(spk_model, hub=hub) if spk_model else None,
+            "device": device,
+            "batch_size": batch_size,
+            "quantize": quantize,
+            "fp16": fp16,
+            "disable_update": disable_update,
+        }
+        params = {k: v for k, v in named.items() if v is not None}
+        params["name"] = name  # always include name
+        params.update(kwargs)
+
         return self._rpc_call("load_model", params, timeout=600)
 
     def unload_model(self, name: str = "default") -> dict:
@@ -247,38 +279,77 @@ class FunASR:
 
     def infer(
         self,
-        input: str = None,
-        input_bytes: bytes = None,
+        audio: str = None,
+        text: str = None,
+        audio_bytes: bytes = None,
         name: str = "default",
+        language: str = None,
+        use_itn: bool = None,
+        batch_size: int = None,
+        hotword: str = None,
+        merge_vad: bool = None,
+        merge_length_s: float = None,
+        output_timestamp: bool = None,
         **kwargs,
     ) -> list:
         """Universal inference — works with ANY loaded FunASR model.
 
         Calls model.generate(input=..., **kwargs) on the server side.
+        Provide exactly one of: audio, text, or audio_bytes.
 
         Args:
-            input: File path (audio) or text string (punctuation models).
-            input_bytes: Raw audio bytes as alternative to file path.
+            audio: Path to audio file (for ASR/VAD/speaker models).
+            text: Text string (for punctuation/text models).
+            audio_bytes: Raw audio bytes (WAV/MP3/etc.).
             name: Model cache key (default: "default").
-            **kwargs: Additional generate() parameters (language, use_itn, etc.)
+            language: Language code (e.g. "zh", "en", "ja").
+            use_itn: Enable inverse text normalization.
+            batch_size: Inference batch size.
+            hotword: Hotword file path or hotword string.
+            merge_vad: Merge short VAD segments.
+            merge_length_s: Max merge length in seconds.
+            output_timestamp: Include timestamps in output.
+            **kwargs: Additional generate() parameters. Common options:
+                - itn (bool): Inverse text normalization (some models).
+                - text_norm (str): Text normalization mode.
+                - batch_size_s (int): Batch size in seconds for VAD inference.
+                - data_type (str): Input data type hint.
 
         Returns:
             List of result dicts. Structure depends on model type:
             - ASR: [{"key": ..., "text": ...}]
             - VAD: [{"key": ..., "value": [[start_ms, end_ms], ...]}]
-            - Punctuation: [{"key": ..., "text": ..., "punc_array": ...}]
+            - Punctuation: [{"key": ..., "text": ...}]
         """
-        params = {"name": name, **kwargs}
+        # Build generate kwargs, filtering out None values
+        named_generate = {
+            "language": language,
+            "use_itn": use_itn,
+            "batch_size": batch_size,
+            "hotword": hotword,
+            "merge_vad": merge_vad,
+            "merge_length_s": merge_length_s,
+            "output_timestamp": output_timestamp,
+        }
+        params = {"name": name}
+        params.update({k: v for k, v in named_generate.items() if v is not None})
+        params.update(kwargs)
 
-        if input_bytes:
-            params["input_base64"] = base64.b64encode(input_bytes).decode()
-        elif input is not None:
-            if os.path.exists(input):
-                params["input"] = str(Path(input).resolve())
+        # Set input
+        if audio_bytes is not None:
+            params["input_base64"] = base64.b64encode(audio_bytes).decode()
+        elif audio is not None:
+            if os.path.exists(audio):
+                params["input"] = str(Path(audio).resolve())
             else:
-                params["input"] = input
+                params["input"] = audio
+        elif text is not None:
+            params["input"] = text
         else:
-            raise ValueError("Either 'input' or 'input_bytes' must be provided")
+            raise ValueError(
+                "Provide exactly one of: 'audio' (file path), "
+                "'text' (text string), or 'audio_bytes' (raw bytes)"
+            )
 
         result = self._rpc_call("infer", params, timeout=600)
         return result.get("results", [])
@@ -296,14 +367,15 @@ class FunASR:
             audio: Path to audio file.
             audio_bytes: Raw audio bytes (WAV/MP3/etc.)
             name: Model cache key.
-            **kwargs: Additional generate() parameters.
+            **kwargs: Additional generate() parameters
+                (language, use_itn, hotword, etc.)
 
         Returns:
             List of result dicts with at least "text" key.
         """
         return self.infer(
-            input=audio,
-            input_bytes=audio_bytes,
+            audio=audio,
+            audio_bytes=audio_bytes,
             name=name,
             **kwargs,
         )
@@ -322,16 +394,20 @@ class FunASR:
         return self._rpc_call("execute", params, timeout=600)
 
     def download_model(self, model: str, hub: str = None) -> dict:
-        """Download a model.
+        """Download a model to local cache.
 
         Args:
-            model: Model ID (e.g. "iic/SenseVoiceSmall")
-            hub: "ms" (ModelScope) or "hf" (HuggingFace).
+            model: Model name or ID (e.g. "SenseVoiceSmall",
+                "iic/SenseVoiceSmall").
+            hub: "ms" (ModelScope) / "hf" (HuggingFace) / None (auto-detect).
+
+        Returns:
+            {"model": str, "path": str, "hub": str}
         """
-        params = {"model": model}
-        if hub:
-            params["hub"] = hub
-        return self._rpc_call("download_model", params, timeout=600)
+        if hub is None:
+            hub = get_hub()
+        resolved = resolve_model_id(model, hub=hub)
+        return self._rpc_call("download_model", {"model": resolved, "hub": hub}, timeout=600)
 
     def list_models(self) -> dict:
         """List all loaded models."""
@@ -342,11 +418,19 @@ class FunASR:
     # ------------------------------------------------------------------
 
     def _rpc_call(self, method: str, params: dict, timeout: float = 30) -> Any:
-        """Send a JSON-RPC 2.0 request to the server."""
+        """Send a JSON-RPC 2.0 request to the server.
+
+        Validates the response strictly per the JSON-RPC 2.0 spec.
+
+        Raises:
+            ConnectionError: Network error or malformed response.
+            ServerError: Server returned a JSON-RPC error.
+        """
         self._rpc_id += 1
+        request_id = self._rpc_id
         payload = {
             "jsonrpc": "2.0",
-            "id": self._rpc_id,
+            "id": request_id,
             "method": method,
             "params": params,
         }
@@ -363,15 +447,45 @@ class FunASR:
 
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
+                raw = resp.read().decode("utf-8")
         except urllib.error.URLError as e:
             raise ConnectionError(f"Cannot connect to server at {url}: {e}")
 
+        try:
+            body = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ConnectionError(f"Invalid JSON response from server: {e}")
+
+        # Validate JSON-RPC 2.0 response structure
+        if not isinstance(body, dict):
+            raise ConnectionError("Invalid JSON-RPC response: expected JSON object")
+
+        if body.get("jsonrpc") != "2.0":
+            raise ConnectionError(
+                f"Invalid JSON-RPC response: expected jsonrpc='2.0', "
+                f"got {body.get('jsonrpc')!r}"
+            )
+
+        if body.get("id") != request_id:
+            raise ConnectionError(
+                f"JSON-RPC response ID mismatch: "
+                f"expected {request_id}, got {body.get('id')!r}"
+            )
+
+        # Check for error response
         if "error" in body:
             err = body["error"]
+            if not isinstance(err, dict) or "code" not in err or "message" not in err:
+                raise ConnectionError(f"Malformed JSON-RPC error object: {err!r}")
             raise ServerError(err["code"], err["message"], err.get("data"))
 
-        return body.get("result")
+        # Must have result
+        if "result" not in body:
+            raise ConnectionError(
+                "Invalid JSON-RPC response: missing 'result' field"
+            )
+
+        return body["result"]
 
     def _wait_for_ready(self, timeout: float = 30):
         """Wait for the HTTP server to accept connections."""

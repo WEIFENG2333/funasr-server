@@ -122,7 +122,7 @@ class TestVADModel:
     def test_infer_vad(self, client):
         """VAD inference returns speech segments from real audio."""
         t0 = time.time()
-        result = client.infer(input=_TEST_AUDIO, name="vad")
+        result = client.infer(audio=_TEST_AUDIO, name="vad")
         infer_time = time.time() - t0
         _print_metric("vad_infer_time", f"{infer_time * 1000:.0f}", "ms")
 
@@ -150,7 +150,7 @@ class TestVADModel:
         _print_metric("audio_bytes_size", f"{len(audio_bytes) / 1024:.1f}", "KB")
 
         t0 = time.time()
-        result = client.infer(input_bytes=audio_bytes, name="vad")
+        result = client.infer(audio_bytes=audio_bytes, name="vad")
         _print_metric("vad_infer_bytes_time", f"{(time.time() - t0) * 1000:.0f}", "ms")
 
         assert isinstance(result, list)
@@ -187,7 +187,7 @@ class TestASRModel:
     def test_infer_asr(self, client):
         """ASR inference returns transcription text from real audio."""
         t0 = time.time()
-        result = client.infer(input=_TEST_AUDIO, name="asr")
+        result = client.infer(audio=_TEST_AUDIO, name="asr")
         infer_time = time.time() - t0
         _print_metric("asr_infer_time", f"{infer_time * 1000:.0f}", "ms")
 
@@ -206,7 +206,7 @@ class TestASRModel:
         audio_bytes = Path(_TEST_AUDIO).read_bytes()
 
         t0 = time.time()
-        result = client.infer(input_bytes=audio_bytes, name="asr")
+        result = client.infer(audio_bytes=audio_bytes, name="asr")
         _print_metric("asr_infer_bytes_time", f"{(time.time() - t0) * 1000:.0f}", "ms")
 
         assert isinstance(result, list)
@@ -228,6 +228,41 @@ class TestASRModel:
         assert result["status"] == "unloaded"
 
 
+class TestNanoModel:
+    """Test with Fun-ASR-Nano (~800M params)."""
+
+    def test_load_nano_model(self, client):
+        """Load Fun-ASR-Nano — uses package's auto model name resolution."""
+        t0 = time.time()
+        result = client.load_model(model="Fun-ASR-Nano", name="nano")
+        load_time = time.time() - t0
+        _print_metric("nano_load_time", f"{load_time:.1f}", "s")
+
+        assert result["status"] == "loaded"
+        assert result["name"] == "nano"
+
+    def test_infer_nano(self, client):
+        """Fun-ASR-Nano inference returns transcription text."""
+        t0 = time.time()
+        result = client.infer(audio=_TEST_AUDIO, name="nano")
+        infer_time = time.time() - t0
+        _print_metric("nano_infer_time", f"{infer_time * 1000:.0f}", "ms")
+
+        assert isinstance(result, list)
+        assert len(result) > 0
+
+        first = result[0]
+        assert "text" in first
+        assert isinstance(first["text"], str)
+        assert len(first["text"]) > 0
+        _print_metric("nano_text", repr(first["text"]))
+
+    def test_unload_nano(self, client):
+        """Unload Nano model."""
+        result = client.unload_model(name="nano")
+        assert result["status"] == "unloaded"
+
+
 class TestSpeakerModel:
     """Test with CAM++ speaker verification model."""
 
@@ -244,7 +279,7 @@ class TestSpeakerModel:
     def test_infer_speaker_embedding(self, client):
         """Speaker model extracts embeddings from real audio."""
         t0 = time.time()
-        result = client.infer(input=_TEST_AUDIO, name="spk")
+        result = client.infer(audio=_TEST_AUDIO, name="spk")
         infer_time = time.time() - t0
         _print_metric("spk_infer_time", f"{infer_time * 1000:.0f}", "ms")
 
@@ -278,7 +313,7 @@ class TestASRWithVADPipeline:
     def test_infer_asr_with_vad(self, client):
         """ASR+VAD pipeline inference on real audio."""
         t0 = time.time()
-        result = client.infer(input=_TEST_AUDIO, name="asr_vad")
+        result = client.infer(audio=_TEST_AUDIO, name="asr_vad")
         infer_time = time.time() - t0
         _print_metric("asr_vad_infer_time", f"{infer_time * 1000:.0f}", "ms")
 
@@ -314,7 +349,7 @@ class TestPunctuationModel:
         test_text = "你好世界今天天气真好我们一起出去玩吧"
 
         t0 = time.time()
-        result = client.infer(input=test_text, name="punc")
+        result = client.infer(text=test_text, name="punc")
         infer_time = time.time() - t0
         _print_metric("punc_infer_time", f"{infer_time * 1000:.0f}", "ms")
 

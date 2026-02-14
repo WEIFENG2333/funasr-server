@@ -75,23 +75,29 @@ def rpc_load_model(params: dict) -> dict:
         punc_model (str, optional): Punctuation model name
         spk_model (str, optional): Speaker model name
         device (str, optional): "cuda" / "cpu" / "auto"
-        **kwargs: Any additional AutoModel parameters
+        hub (str, optional): "ms" / "hf"
+        batch_size (int, optional): Inference batch size
+        quantize (bool, optional): Enable quantization
+        fp16 (bool, optional): Enable half-precision
+        disable_update (bool, optional): Skip model update checks
+        **remaining: Any additional AutoModel parameters
     """
     from funasr import AutoModel
 
-    name = params.pop("name", "default")
+    name = params.get("name", "default")
+    model_kwargs = {k: v for k, v in params.items() if k != "name"}
 
-    if name in _models and _model_kwargs.get(name) == params:
+    if name in _models and _model_kwargs.get(name) == model_kwargs:
         return {"name": name, "status": "already_loaded"}
 
     if name in _models:
         del _models[name]
         _model_kwargs.pop(name, None)
 
-    logger.info(f"Loading model '{name}': {params}")
-    model = AutoModel(**params)
+    logger.info(f"Loading model '{name}': {model_kwargs}")
+    model = AutoModel(**model_kwargs)
     _models[name] = model
-    _model_kwargs[name] = params.copy()
+    _model_kwargs[name] = model_kwargs
 
     return {"name": name, "status": "loaded"}
 
@@ -143,21 +149,32 @@ def rpc_infer(params: dict) -> dict:
         input (str): Input data — file path (audio) or text string
         input_base64 (str): Base64-encoded audio bytes (alternative to input)
         audio_format (str): Suffix for temp file when using input_base64 (default: ".wav")
-        **kwargs: Additional generate() parameters passed directly to the model
+        language (str, optional): Language code (e.g. "zh", "en")
+        use_itn (bool, optional): Enable inverse text normalization
+        batch_size (int, optional): Inference batch size
+        hotword (str, optional): Hotword file path or string
+        merge_vad (bool, optional): Merge short VAD segments
+        merge_length_s (float, optional): Max merge length in seconds
+        output_timestamp (bool, optional): Include timestamps in output
+        **remaining: Any additional generate() parameters
     """
-    name = params.pop("name", "default")
+    name = params.get("name", "default")
     if name not in _models:
         raise ValueError(f"Model '{name}' not loaded. Call load_model first.")
 
     model = _models[name]
 
-    input_data = params.pop("input", None)
-    input_base64 = params.pop("input_base64", None)
+    input_data = params.get("input")
+    input_base64 = params.get("input_base64")
     tmp_file = None
+
+    # Build generate kwargs: everything except control params
+    _control_keys = {"name", "input", "input_base64", "audio_format"}
+    generate_kwargs = {k: v for k, v in params.items() if k not in _control_keys}
 
     if input_base64:
         audio_bytes = base64.b64decode(input_base64)
-        suffix = params.pop("audio_format", ".wav")
+        suffix = params.get("audio_format", ".wav")
         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         tmp.write(audio_bytes)
         tmp.close()
@@ -168,7 +185,7 @@ def rpc_infer(params: dict) -> dict:
         raise ValueError("'input' or 'input_base64' is required")
 
     try:
-        result = model.generate(input=input_data, **params)
+        result = model.generate(input=input_data, **generate_kwargs)
     finally:
         if tmp_file and os.path.exists(tmp_file):
             os.unlink(tmp_file)
@@ -182,11 +199,13 @@ def rpc_transcribe(params: dict) -> dict:
     Same as infer(), but uses 'audio'/'audio_base64' param names
     for backward compatibility.
     """
-    if "audio" in params:
-        params["input"] = params.pop("audio")
-    if "audio_base64" in params:
-        params["input_base64"] = params.pop("audio_base64")
-    return rpc_infer(params)
+    # Remap param names without mutating the original dict
+    mapped = dict(params)
+    if "audio" in mapped:
+        mapped["input"] = mapped.pop("audio")
+    if "audio_base64" in mapped:
+        mapped["input_base64"] = mapped.pop("audio_base64")
+    return rpc_infer(mapped)
 
 
 def rpc_execute(params: dict) -> dict:
@@ -296,12 +315,18 @@ async def handle_rpc(request: Request):
     except Exception:
         return JSONResponse(_error(None, -32700, "Parse error"))
 
+    if not isinstance(body, dict):
+        return JSONResponse(_error(None, -32600, "Invalid Request: expected JSON object"))
+
     req_id = body.get("id")
     method = body.get("method")
     params = body.get("params", {})
 
-    if not method:
-        return JSONResponse(_error(req_id, -32600, "Invalid Request: missing 'method'"))
+    if not isinstance(method, str) or not method:
+        return JSONResponse(_error(req_id, -32600, "Invalid Request: 'method' must be a non-empty string"))
+
+    if not isinstance(params, dict):
+        return JSONResponse(_error(req_id, -32602, "Invalid params: expected JSON object"))
 
     handler = _METHODS.get(method)
     if not handler:
