@@ -17,6 +17,10 @@ Usage:
     # Short aliases also work
     model_id = resolve_model_id("fsmn-vad", hub="hf")
     # → "fsmn-vad"  (FunASR internally resolves short aliases)
+
+    # Any FunASR model ID works even if not in the registry
+    model_id = resolve_model_id("iic/some-custom-model", hub="ms")
+    # → "iic/some-custom-model"  (passed through unchanged)
 """
 
 import logging
@@ -24,74 +28,176 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
 # Model registry: name → {"ms": model_id, "hf": model_id, "type": str}
 #
-# FunASR has its own name_maps for short aliases like "fsmn-vad", "ct-punc",
-# "cam++" etc. Those work on both hubs without us doing anything.
+# For models that have short aliases in FunASR's own name_maps
+# (fsmn-vad, ct-punc, cam++, etc.), the short name works on both hubs
+# so ms/hf values are identical.
 #
-# This registry handles models that DON'T have short aliases (like
-# SenseVoiceSmall) or where users might use various names.
+# For models WITHOUT short aliases (SenseVoiceSmall, Fun-ASR-Nano, etc.),
+# we provide the correct hub-specific full ID.
+# ---------------------------------------------------------------------------
+
 MODEL_REGISTRY = {
-    # ASR models
+    # =================================================================
+    # ASR — SenseVoice
+    # =================================================================
     "SenseVoiceSmall": {
         "ms": "iic/SenseVoiceSmall",
         "hf": "FunAudioLLM/SenseVoiceSmall",
         "type": "asr",
+        "desc": "Multi-task ASR (zh/en/ja/ko/yue), 234M params",
+    },
+
+    # =================================================================
+    # ASR — Fun-ASR-Nano (latest 2025 models)
+    # =================================================================
+    "Fun-ASR-Nano": {
+        "ms": "FunAudioLLM/Fun-ASR-Nano-2512",
+        "hf": "FunAudioLLM/Fun-ASR-Nano-2512",
+        "type": "asr",
+        "desc": "End-to-end ASR, zh (7 dialects, 26 accents) + en + ja, 800M params",
+    },
+    "Fun-ASR-MLT-Nano": {
+        "ms": "FunAudioLLM/Fun-ASR-MLT-Nano-2512",
+        "hf": "FunAudioLLM/Fun-ASR-MLT-Nano-2512",
+        "type": "asr",
+        "desc": "Multilingual ASR (31 languages), 800M params",
+    },
+
+    # =================================================================
+    # ASR — Paraformer family
+    # =================================================================
+    "paraformer": {
+        "ms": "paraformer",
+        "hf": "paraformer",
+        "type": "asr",
+        "desc": "Paraformer-large, zh+en, 220M, offline (max 20s)",
     },
     "paraformer-zh": {
         "ms": "paraformer-zh",
         "hf": "paraformer-zh",
         "type": "asr",
+        "desc": "Paraformer-large with SeACo, zh+en, 220M, arbitrary length",
     },
     "paraformer-en": {
         "ms": "paraformer-en",
         "hf": "paraformer-en",
         "type": "asr",
+        "desc": "Paraformer-large, English, 220M, long audio",
+    },
+    "paraformer-en-spk": {
+        "ms": "paraformer-en-spk",
+        "hf": "paraformer-en-spk",
+        "type": "asr",
+        "desc": "Paraformer-large + speaker diarization, 220M",
+    },
+    "paraformer-zh-streaming": {
+        "ms": "paraformer-zh-streaming",
+        "hf": "paraformer-zh-streaming",
+        "type": "asr",
+        "desc": "Paraformer-large streaming, zh+en, 220M, online",
+    },
+
+    # =================================================================
+    # ASR — Whisper (via FunASR wrapper)
+    # =================================================================
+    "Whisper-large-v2": {
+        "ms": "Whisper-large-v2",
+        "hf": "Whisper-large-v2",
+        "type": "asr",
+        "desc": "OpenAI Whisper large-v2, multilingual",
     },
     "Whisper-large-v3": {
         "ms": "Whisper-large-v3",
         "hf": "Whisper-large-v3",
         "type": "asr",
+        "desc": "OpenAI Whisper large-v3, multilingual, 1550M",
     },
     "Whisper-large-v3-turbo": {
         "ms": "Whisper-large-v3-turbo",
         "hf": "Whisper-large-v3-turbo",
         "type": "asr",
+        "desc": "OpenAI Whisper large-v3-turbo, multilingual, 809M",
     },
 
-    # VAD models
+    # =================================================================
+    # ASR — Qwen-Audio
+    # =================================================================
+    "Qwen-Audio": {
+        "ms": "Qwen-Audio",
+        "hf": "Qwen-Audio",
+        "type": "asr",
+        "desc": "Qwen-Audio multimodal, 8B params",
+    },
+
+    # =================================================================
+    # VAD — Voice Activity Detection
+    # =================================================================
     "fsmn-vad": {
         "ms": "fsmn-vad",
         "hf": "fsmn-vad",
         "type": "vad",
+        "desc": "FSMN-VAD, 0.4M params, 16kHz",
     },
 
-    # Punctuation models
+    # =================================================================
+    # Punctuation Restoration
+    # =================================================================
     "ct-punc": {
         "ms": "ct-punc",
         "hf": "ct-punc",
         "type": "punc",
+        "desc": "CT-Transformer punctuation, zh+en, 1.1G (large)",
+    },
+    "ct-punc-c": {
+        "ms": "ct-punc-c",
+        "hf": "ct-punc-c",
+        "type": "punc",
+        "desc": "CT-Transformer punctuation, zh+en, 291M",
     },
 
-    # Speaker models
+    # =================================================================
+    # Speaker Verification / Embedding
+    # =================================================================
     "cam++": {
         "ms": "cam++",
         "hf": "cam++",
         "type": "spk",
+        "desc": "CAM++ speaker embedding, 7.2M params",
     },
 
-    # Timestamp / forced alignment
+    # =================================================================
+    # Timestamp / Forced Alignment
+    # =================================================================
     "fa-zh": {
         "ms": "fa-zh",
         "hf": "fa-zh",
         "type": "fa",
+        "desc": "Timestamp prediction, zh, 37.8M params",
     },
 
-    # Emotion models
+    # =================================================================
+    # Emotion Recognition
+    # =================================================================
     "emotion2vec_plus_large": {
         "ms": "emotion2vec_plus_large",
         "hf": "emotion2vec_plus_large",
         "type": "emotion",
+        "desc": "Emotion recognition, 300M params, 5 emotions",
+    },
+    "emotion2vec_plus_base": {
+        "ms": "emotion2vec_plus_base",
+        "hf": "emotion2vec_plus_base",
+        "type": "emotion",
+        "desc": "Emotion recognition (base), 5 emotions",
+    },
+    "emotion2vec_plus_seed": {
+        "ms": "emotion2vec_plus_seed",
+        "hf": "emotion2vec_plus_seed",
+        "type": "emotion",
+        "desc": "Emotion recognition (seed), 5 emotions",
     },
 }
 
@@ -147,6 +253,6 @@ def list_available_models() -> dict:
     """List all models in the registry.
 
     Returns:
-        Dict mapping model names to their info (type, hub IDs).
+        Dict mapping model names to their info (type, hub IDs, description).
     """
     return {name: dict(entry) for name, entry in MODEL_REGISTRY.items()}
