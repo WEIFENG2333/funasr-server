@@ -296,6 +296,7 @@ Model names are automatically resolved to the correct hub (ModelScope in China, 
 | `load_model(model, ...)` | `Model` | Load a model, returns a `Model` handle. |
 | `health()` | `dict` | Check server status. |
 | `list_models()` | `dict` | List loaded models. |
+| `get_progress(name)` | `dict` | Get inference progress `{"current", "total"}`. |
 | `execute(code)` | `dict` | Execute Python code on the server. |
 
 ### `load_model()` Parameters
@@ -331,6 +332,9 @@ result = model(audio="file.wav")
 # Alias for ASR
 result = model.transcribe(audio="file.wav")
 
+# Progress query
+progress = model.get_progress()  # {"current": 3, "total": 10}
+
 # Unload from memory
 model.unload()
 ```
@@ -348,6 +352,33 @@ model.unload()
 | `hotword` | `str` | Hotword string for biased recognition |
 | `merge_vad` | `bool` | Merge short VAD segments |
 | `merge_length_s` | `float` | Max merge length in seconds (default: 15) |
+| `progress_callback` | `callable` | Progress callback `(current, total) -> None` |
+
+### Inference Progress
+
+You can track inference progress using `progress_callback`:
+
+```python
+model = asr.load_model("SenseVoiceSmall", vad_model="fsmn-vad")
+
+def on_progress(current, total):
+    if total > 0:
+        print(f"\rProgress: {current}/{total} ({current/total*100:.0f}%)", end="")
+
+result = model.infer(audio="long_meeting.wav", progress_callback=on_progress)
+```
+
+When `progress_callback` is provided, inference runs in a background thread while the client polls the server every 0.5s for progress updates. The callback receives `(current, total)` where `current` is the number of completed batches and `total` is the total number of batches.
+
+You can also query progress manually (e.g. from another thread):
+
+```python
+progress = model.get_progress()  # {"current": 3, "total": 10}
+```
+
+When no inference is running, returns `{"current": 0, "total": 0}`.
+
+> **Note:** Progress granularity depends on the number of VAD segments. Short audio with few segments may only show 0/0 → 1/1. Longer audio (e.g. meetings) with many VAD segments will produce finer-grained progress updates.
 
 ## Architecture
 
