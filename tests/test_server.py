@@ -213,7 +213,9 @@ def test_rpc_infer():
 
     result = server.rpc_infer({"input": "test.wav"})
     assert result["results"] == [{"key": "test", "text": "hello"}]
-    mock_model.generate.assert_called_once_with(input="test.wav")
+    call_kwargs = mock_model.generate.call_args[1]
+    assert call_kwargs["input"] == "test.wav"
+    assert "progress_callback" in call_kwargs
 
 
 def test_rpc_infer_by_name():
@@ -233,7 +235,11 @@ def test_rpc_infer_passes_extra_kwargs():
     server._models["default"] = mock_model
 
     server.rpc_infer({"input": "test.wav", "language": "zh", "use_itn": True})
-    mock_model.generate.assert_called_once_with(input="test.wav", language="zh", use_itn=True)
+    call_kwargs = mock_model.generate.call_args[1]
+    assert call_kwargs["input"] == "test.wav"
+    assert call_kwargs["language"] == "zh"
+    assert call_kwargs["use_itn"] is True
+    assert "progress_callback" in call_kwargs
 
 
 def test_rpc_infer_model_not_loaded():
@@ -276,7 +282,9 @@ def test_rpc_transcribe_maps_params():
 
     result = server.rpc_transcribe({"audio": "test.wav"})
     assert result["results"] == [{"key": "test", "text": "hello"}]
-    mock_model.generate.assert_called_once_with(input="test.wav")
+    call_kwargs = mock_model.generate.call_args[1]
+    assert call_kwargs["input"] == "test.wav"
+    assert "progress_callback" in call_kwargs
 
 
 def test_rpc_transcribe_maps_audio_base64():
@@ -411,5 +419,5 @@ def test_rpc_list_models_multiple():
 
 def test_methods_dispatch_table():
     expected = {"health", "load_model", "unload_model", "infer", "transcribe",
-                "execute", "download_model", "list_models", "shutdown"}
+                "execute", "download_model", "list_models", "get_progress", "shutdown"}
     assert expected == set(server._METHODS.keys())

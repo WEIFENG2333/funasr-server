@@ -9,6 +9,7 @@ Usage:
 """
 
 import argparse
+import asyncio
 import base64
 import io
 import json
@@ -32,6 +33,7 @@ logger = logging.getLogger("funasr_server")
 
 _models: dict = {}  # name -> AutoModel instance
 _model_kwargs: dict = {}  # name -> kwargs used to create it
+_progress: dict = {}  # name -> {"current": int, "total": int}
 _exec_globals: dict = {"__builtins__": __builtins__}  # shared exec namespace
 
 
@@ -184,9 +186,16 @@ def rpc_infer(params: dict) -> dict:
     if input_data is None:
         raise ValueError("'input' or 'input_base64' is required")
 
+    def _on_progress(current, total):
+        _progress[name] = {"current": current, "total": total}
+
+    _progress[name] = {"current": 0, "total": 0}
     try:
-        result = model.generate(input=input_data, **generate_kwargs)
+        result = model.generate(
+            input=input_data, progress_callback=_on_progress, **generate_kwargs
+        )
     finally:
+        _progress.pop(name, None)
         if tmp_file and os.path.exists(tmp_file):
             os.unlink(tmp_file)
 
@@ -284,6 +293,19 @@ def rpc_list_models(params: dict) -> dict:
     }
 
 
+def rpc_get_progress(params: dict) -> dict:
+    """Get inference progress for a model.
+
+    Params:
+        name (str): Model cache key (default: "default")
+
+    Returns:
+        {"current": int, "total": int} — 0/0 if not running.
+    """
+    name = params.get("name", "default")
+    return _progress.get(name, {"current": 0, "total": 0})
+
+
 def rpc_shutdown(params: dict) -> dict:
     """Gracefully shut down the server."""
     logger.info("Shutdown requested")
@@ -300,8 +322,13 @@ _METHODS = {
     "execute": rpc_execute,
     "download_model": rpc_download_model,
     "list_models": rpc_list_models,
+    "get_progress": rpc_get_progress,
     "shutdown": rpc_shutdown,
 }
+
+# Methods that block for a long time and must run in a thread pool
+# so other requests (like get_progress) can be handled concurrently.
+_BLOCKING_METHODS = {"infer", "transcribe", "load_model", "download_model"}
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +360,11 @@ async def handle_rpc(request: Request):
         return JSONResponse(_error(req_id, -32601, f"Method not found: {method}"))
 
     try:
-        result = handler(params)
+        if method in _BLOCKING_METHODS:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, handler, params)
+        else:
+            result = handler(params)
         return JSONResponse(_ok(req_id, result))
     except Exception as e:
         logger.exception(f"Error in method '{method}'")

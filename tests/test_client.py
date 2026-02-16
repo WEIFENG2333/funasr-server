@@ -38,6 +38,8 @@ class MockRPCHandler(BaseHTTPRequestHandler):
             result = {"models": {}}
         elif method == "execute":
             result = {"output": "ok", "return_value": None}
+        elif method == "get_progress":
+            result = {"current": 3, "total": 10}
         elif method == "download_model":
             result = {"model": params.get("model"), "path": "/tmp/model", "hub": params.get("hub", "ms")}
         elif method == "error_test":
@@ -417,3 +419,45 @@ def test_rpc_rejects_no_result(client):
 def test_rpc_rejects_malformed_error(client):
     with pytest.raises(ConnectionError, match="Malformed JSON-RPC error"):
         client._rpc_call("malformed_error", {})
+
+
+# ------------------------------------------------------------------
+# Progress
+# ------------------------------------------------------------------
+
+def test_get_progress(client):
+    result = client.get_progress(name="test")
+    assert result["current"] == 3
+    assert result["total"] == 10
+
+
+def test_model_get_progress(client):
+    with patch("funasr_server.client.get_hub", return_value="ms"):
+        model = client.load_model("test-model", name="my_model")
+    result = model.get_progress()
+    assert result["current"] == 3
+    assert result["total"] == 10
+
+
+def test_model_infer_with_progress_callback(client):
+    with patch("funasr_server.client.get_hub", return_value="ms"):
+        model = client.load_model("test-model")
+
+    calls = []
+
+    def on_progress(current, total):
+        calls.append((current, total))
+
+    result = model.infer(audio="test.wav", progress_callback=on_progress)
+    assert result[0]["text"] == "hello world"
+    # progress_callback should have been called at least once
+    assert len(calls) >= 1
+    assert calls[0] == (3, 10)
+
+
+def test_model_infer_without_progress_callback(client):
+    with patch("funasr_server.client.get_hub", return_value="ms"):
+        model = client.load_model("test-model")
+    # Without progress_callback — should work exactly as before
+    result = model.infer(audio="test.wav")
+    assert result[0]["text"] == "hello world"

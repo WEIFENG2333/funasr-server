@@ -81,6 +81,7 @@ class Model:
         merge_vad: bool = None,
         merge_length_s: float = None,
         output_timestamp: bool = None,
+        progress_callback=None,
         **kwargs,
     ) -> list:
         """Run inference on this model.
@@ -96,12 +97,13 @@ class Model:
             merge_vad: Merge short VAD segments.
             merge_length_s: Max merge length in seconds.
             output_timestamp: Include timestamps in output.
+            progress_callback: Optional callable(current, total) for progress.
             **kwargs: Additional generate() parameters.
 
         Returns:
             List of result dicts.
         """
-        return self._client.infer(
+        infer_kwargs = dict(
             audio=audio, text=text, audio_bytes=audio_bytes,
             name=self.name,
             language=language, use_itn=use_itn, batch_size=batch_size,
@@ -109,6 +111,34 @@ class Model:
             merge_length_s=merge_length_s, output_timestamp=output_timestamp,
             **kwargs,
         )
+
+        if progress_callback is None:
+            return self._client.infer(**infer_kwargs)
+
+        import threading
+
+        result_box = [None]
+        error_box = [None]
+
+        def _do_infer():
+            try:
+                result_box[0] = self._client.infer(**infer_kwargs)
+            except Exception as e:
+                error_box[0] = e
+
+        t = threading.Thread(target=_do_infer)
+        t.start()
+        while t.is_alive():
+            try:
+                p = self.get_progress()
+                progress_callback(p["current"], p["total"])
+            except Exception:
+                pass
+            t.join(timeout=0.5)
+
+        if error_box[0] is not None:
+            raise error_box[0]
+        return result_box[0]
 
     def transcribe(
         self,
@@ -118,6 +148,10 @@ class Model:
     ) -> list:
         """Transcribe audio — convenience alias for infer()."""
         return self.infer(audio=audio, audio_bytes=audio_bytes, **kwargs)
+
+    def get_progress(self) -> dict:
+        """Get inference progress. Returns {"current": int, "total": int}."""
+        return self._client.get_progress(name=self.name)
 
     def unload(self) -> dict:
         """Unload this model from the server."""
@@ -366,6 +400,10 @@ class FunASR:
     def unload_model(self, name: str) -> dict:
         """Unload a model by name. Prefer ``model.unload()`` instead."""
         return self._rpc_call("unload_model", {"name": name})
+
+    def get_progress(self, name: str) -> dict:
+        """Get inference progress. Returns {"current": int, "total": int}."""
+        return self._rpc_call("get_progress", {"name": name}, timeout=5)
 
     def infer(
         self,
