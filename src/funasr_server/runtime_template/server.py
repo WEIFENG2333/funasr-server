@@ -170,8 +170,10 @@ def rpc_infer(params: dict) -> dict:
     input_base64 = params.get("input_base64")
     tmp_file = None
 
+    text = params.get("text")
+
     # Build generate kwargs: everything except control params
-    _control_keys = {"name", "input", "input_base64", "audio_format"}
+    _control_keys = {"name", "input", "input_base64", "audio_format", "text"}
     generate_kwargs = {k: v for k, v in params.items() if k not in _control_keys}
 
     if input_base64:
@@ -185,6 +187,12 @@ def rpc_infer(params: dict) -> dict:
 
     if input_data is None:
         raise ValueError("'input' or 'input_base64' is required")
+
+    # For models that need both audio and text (e.g. fa-zh forced alignment),
+    # pass input as a tuple with data_type hint.
+    if text is not None and input_data is not None:
+        input_data = (input_data, text)
+        generate_kwargs["data_type"] = ("sound", "text")
 
     def _on_progress(current, total):
         _progress[name] = {"current": current, "total": total}

@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import platform
+import shutil
 import signal
 import subprocess
 import time
@@ -38,6 +39,8 @@ from typing import Any, Optional
 from funasr_server.installer import Installer
 from funasr_server.mirror import get_hub
 from funasr_server.models import resolve_model_id
+
+_TEMPLATE_DIR = Path(__file__).parent / "runtime_template"
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +234,8 @@ class FunASR:
             logger.info(f"Server already running (pid={self._process.pid})")
             return self.port
 
+        self._sync_server_py()
+
         uv_path = self.installer.get_uv_path()
         if not uv_path:
             raise RuntimeError("uv not found. Call ensure_installed() first.")
@@ -302,6 +307,22 @@ class FunASR:
         if self._process is None:
             return False
         return self._process.poll() is None
+
+    def _sync_server_py(self):
+        """Sync server.py from template to runtime dir if outdated.
+
+        Called automatically before each start() so that upgrading the
+        funasr-server package immediately picks up server-side changes
+        without requiring a full re-install.
+        """
+        template = _TEMPLATE_DIR / "server.py"
+        runtime = self.runtime_dir / "server.py"
+        if not template.exists() or not runtime.exists():
+            return
+        if runtime.read_bytes() == template.read_bytes():
+            return
+        shutil.copy2(template, runtime)
+        logger.info("Synced server.py from template (updated)")
 
     # ------------------------------------------------------------------
     # High-level API
@@ -423,11 +444,15 @@ class FunASR:
 
         if audio_bytes is not None:
             params["input_base64"] = base64.b64encode(audio_bytes).decode()
+            if text is not None:
+                params["text"] = text
         elif audio is not None:
             if os.path.exists(audio):
                 params["input"] = str(Path(audio).resolve())
             else:
                 params["input"] = audio
+            if text is not None:
+                params["text"] = text
         elif text is not None:
             params["input"] = text
         else:

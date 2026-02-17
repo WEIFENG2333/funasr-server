@@ -461,3 +461,55 @@ def test_model_infer_without_progress_callback(client):
     # Without progress_callback — should work exactly as before
     result = model.infer(audio="test.wav")
     assert result[0]["text"] == "hello world"
+
+
+# ------------------------------------------------------------------
+# server.py sync tests
+# ------------------------------------------------------------------
+
+def test_sync_server_py_copies_when_different(tmp_path):
+    """_sync_server_py copies template when runtime file differs."""
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    server_py = runtime / "server.py"
+    server_py.write_text("old content")
+
+    asr = FunASR(runtime_dir=str(runtime))
+
+    template = Path(__file__).parent.parent / "src" / "funasr_server" / "runtime_template" / "server.py"
+    template_content = template.read_bytes()
+
+    asr._sync_server_py()
+
+    assert server_py.read_bytes() == template_content
+
+
+def test_sync_server_py_skips_when_same(tmp_path):
+    """_sync_server_py does nothing when files are identical."""
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    server_py = runtime / "server.py"
+
+    template = Path(__file__).parent.parent / "src" / "funasr_server" / "runtime_template" / "server.py"
+    template_content = template.read_bytes()
+    server_py.write_bytes(template_content)
+
+    mtime_before = server_py.stat().st_mtime
+
+    asr = FunASR(runtime_dir=str(runtime))
+    asr._sync_server_py()
+
+    # File should not have been touched (same mtime)
+    assert server_py.stat().st_mtime == mtime_before
+
+
+def test_sync_server_py_skips_when_no_runtime(tmp_path):
+    """_sync_server_py does nothing when runtime server.py doesn't exist yet."""
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    # No server.py in runtime dir
+
+    asr = FunASR(runtime_dir=str(runtime))
+    asr._sync_server_py()  # should not raise
+
+    assert not (runtime / "server.py").exists()
