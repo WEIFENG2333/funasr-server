@@ -133,7 +133,8 @@ def _nvidia_smi_output(cuda_version="12.8"):
 def test_detect_gpu_no_nvidia():
     """No NVIDIA GPU returns 'cpu'."""
     installer = Installer("/tmp/test")
-    with patch("funasr_server.installer.subprocess.run",
+    with patch("funasr_server.installer.platform.system", return_value="Linux"), \
+         patch("funasr_server.installer.subprocess.run",
                side_effect=FileNotFoundError):
         assert installer._detect_gpu() == "cpu"
 
@@ -144,7 +145,8 @@ def test_detect_gpu_cuda_128():
     mock_result = MagicMock()
     mock_result.returncode = 0
     mock_result.stdout = _nvidia_smi_output("12.8")
-    with patch("funasr_server.installer.subprocess.run", return_value=mock_result):
+    with patch("funasr_server.installer.platform.system", return_value="Linux"), \
+         patch("funasr_server.installer.subprocess.run", return_value=mock_result):
         assert installer._detect_gpu() == "cu128"
 
 
@@ -154,7 +156,8 @@ def test_detect_gpu_cuda_124():
     mock_result = MagicMock()
     mock_result.returncode = 0
     mock_result.stdout = _nvidia_smi_output("12.4")
-    with patch("funasr_server.installer.subprocess.run", return_value=mock_result):
+    with patch("funasr_server.installer.platform.system", return_value="Linux"), \
+         patch("funasr_server.installer.subprocess.run", return_value=mock_result):
         assert installer._detect_gpu() == "cu124"
 
 
@@ -164,7 +167,8 @@ def test_detect_gpu_cuda_121():
     mock_result = MagicMock()
     mock_result.returncode = 0
     mock_result.stdout = _nvidia_smi_output("12.1")
-    with patch("funasr_server.installer.subprocess.run", return_value=mock_result):
+    with patch("funasr_server.installer.platform.system", return_value="Linux"), \
+         patch("funasr_server.installer.subprocess.run", return_value=mock_result):
         assert installer._detect_gpu() == "cu121"
 
 
@@ -174,7 +178,8 @@ def test_detect_gpu_cuda_118():
     mock_result = MagicMock()
     mock_result.returncode = 0
     mock_result.stdout = _nvidia_smi_output("11.8")
-    with patch("funasr_server.installer.subprocess.run", return_value=mock_result):
+    with patch("funasr_server.installer.platform.system", return_value="Linux"), \
+         patch("funasr_server.installer.subprocess.run", return_value=mock_result):
         assert installer._detect_gpu() == "cu118"
 
 
@@ -184,7 +189,8 @@ def test_detect_gpu_cuda_126():
     mock_result = MagicMock()
     mock_result.returncode = 0
     mock_result.stdout = _nvidia_smi_output("12.6")
-    with patch("funasr_server.installer.subprocess.run", return_value=mock_result):
+    with patch("funasr_server.installer.platform.system", return_value="Linux"), \
+         patch("funasr_server.installer.subprocess.run", return_value=mock_result):
         assert installer._detect_gpu() == "cu126"
 
 
@@ -194,7 +200,8 @@ def test_detect_gpu_cuda_too_old():
     mock_result = MagicMock()
     mock_result.returncode = 0
     mock_result.stdout = _nvidia_smi_output("10.2")
-    with patch("funasr_server.installer.subprocess.run", return_value=mock_result):
+    with patch("funasr_server.installer.platform.system", return_value="Linux"), \
+         patch("funasr_server.installer.subprocess.run", return_value=mock_result):
         assert installer._detect_gpu() == "cpu"
 
 
@@ -211,7 +218,8 @@ def test_detect_gpu_unparseable():
     mock_result = MagicMock()
     mock_result.returncode = 0
     mock_result.stdout = b"some weird output without version"
-    with patch("funasr_server.installer.subprocess.run", return_value=mock_result):
+    with patch("funasr_server.installer.platform.system", return_value="Linux"), \
+         patch("funasr_server.installer.subprocess.run", return_value=mock_result):
         assert installer._detect_gpu() == "cu128"
 
 
