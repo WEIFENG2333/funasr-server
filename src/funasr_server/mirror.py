@@ -19,11 +19,9 @@ logger = logging.getLogger(__name__)
 
 _CN_PIP_INDEX = "https://mirrors.aliyun.com/pypi/simple/"
 _CN_PIP_TRUSTED_HOST = "mirrors.aliyun.com"
-_CN_TORCH_INDEX = "https://mirror.sjtu.edu.cn/pytorch-wheels/cu121"
-_CN_TORCH_CPU_INDEX = "https://mirror.sjtu.edu.cn/pytorch-wheels/cpu"
+_CN_TORCH_BASE = "https://mirror.sjtu.edu.cn/pytorch-wheels"
 
-_INTL_TORCH_INDEX = "https://download.pytorch.org/whl/cu121"
-_INTL_TORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
+_INTL_TORCH_BASE = "https://download.pytorch.org/whl"
 
 # International hosts to probe — if ANY of these are reachable, we're international
 _INTL_HOSTS = [
@@ -130,16 +128,14 @@ def get_mirror_config(region: str = None) -> dict:
         return {
             "pip_index_url": _CN_PIP_INDEX,
             "pip_trusted_host": _CN_PIP_TRUSTED_HOST,
-            "torch_index_url": _CN_TORCH_INDEX,
-            "torch_cpu_index_url": _CN_TORCH_CPU_INDEX,
+            "torch_base_url": _CN_TORCH_BASE,
             "model_hub": "ms",
         }
     else:
         return {
             "pip_index_url": None,
             "pip_trusted_host": None,
-            "torch_index_url": _INTL_TORCH_INDEX,
-            "torch_cpu_index_url": _INTL_TORCH_CPU_INDEX,
+            "torch_base_url": _INTL_TORCH_BASE,
             "model_hub": "hf",
         }
 

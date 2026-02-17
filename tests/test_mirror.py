@@ -143,8 +143,7 @@ def test_get_mirror_config_cn():
     config = get_mirror_config("cn")
     assert "aliyun" in config["pip_index_url"]
     assert config["pip_trusted_host"] == "mirrors.aliyun.com"
-    assert "sjtu" in config["torch_index_url"]
-    assert "sjtu" in config["torch_cpu_index_url"]
+    assert "sjtu" in config["torch_base_url"]
     assert config["model_hub"] == "ms"
 
 
@@ -152,8 +151,7 @@ def test_get_mirror_config_intl():
     config = get_mirror_config("intl")
     assert config["pip_index_url"] is None
     assert config["pip_trusted_host"] is None
-    assert "pytorch.org" in config["torch_index_url"]
-    assert "pytorch.org" in config["torch_cpu_index_url"]
+    assert "pytorch.org" in config["torch_base_url"]
     assert config["model_hub"] == "hf"
 
 

@@ -96,6 +96,7 @@ def test_create_runtime_dir():
     with tempfile.TemporaryDirectory() as tmpdir:
         runtime_dir = Path(tmpdir) / "runtime"
         installer = Installer(str(runtime_dir))
+        installer._region = "intl"
         installer._create_runtime_dir()
 
         assert runtime_dir.exists()
@@ -103,17 +104,190 @@ def test_create_runtime_dir():
         assert (runtime_dir / "server.py").exists()
         assert (runtime_dir / "models").is_dir()
 
+        # pyproject.toml should be generated (not copied from template)
+        content = (runtime_dir / "pyproject.toml").read_text()
+        assert "funasr-server-runtime" in content
+        assert "torch" in content
+
 
 def test_create_runtime_dir_idempotent():
     """Calling _create_runtime_dir() twice doesn't fail."""
     with tempfile.TemporaryDirectory() as tmpdir:
         runtime_dir = Path(tmpdir) / "runtime"
         installer = Installer(str(runtime_dir))
+        installer._region = "intl"
         installer._create_runtime_dir()
         installer._create_runtime_dir()  # second call should not fail
 
         assert (runtime_dir / "pyproject.toml").exists()
         assert (runtime_dir / "server.py").exists()
+
+
+def _nvidia_smi_output(cuda_version="12.8"):
+    """Build a fake nvidia-smi output string."""
+    return (
+        f"| NVIDIA-SMI 550.135  Driver Version: 550.135  CUDA Version: {cuda_version} |\n"
+    ).encode()
+
+
+def test_detect_gpu_no_nvidia():
+    """No NVIDIA GPU returns 'cpu'."""
+    installer = Installer("/tmp/test")
+    with patch("funasr_server.installer.subprocess.run",
+               side_effect=FileNotFoundError):
+        assert installer._detect_gpu() == "cpu"
+
+
+def test_detect_gpu_cuda_128():
+    """CUDA 12.8 driver selects cu128."""
+    installer = Installer("/tmp/test")
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = _nvidia_smi_output("12.8")
+    with patch("funasr_server.installer.subprocess.run", return_value=mock_result):
+        assert installer._detect_gpu() == "cu128"
+
+
+def test_detect_gpu_cuda_124():
+    """CUDA 12.4 driver selects cu124 (not cu126 or cu128)."""
+    installer = Installer("/tmp/test")
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = _nvidia_smi_output("12.4")
+    with patch("funasr_server.installer.subprocess.run", return_value=mock_result):
+        assert installer._detect_gpu() == "cu124"
+
+
+def test_detect_gpu_cuda_121():
+    """CUDA 12.1 driver selects cu121."""
+    installer = Installer("/tmp/test")
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = _nvidia_smi_output("12.1")
+    with patch("funasr_server.installer.subprocess.run", return_value=mock_result):
+        assert installer._detect_gpu() == "cu121"
+
+
+def test_detect_gpu_cuda_118():
+    """CUDA 11.8 driver selects cu118."""
+    installer = Installer("/tmp/test")
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = _nvidia_smi_output("11.8")
+    with patch("funasr_server.installer.subprocess.run", return_value=mock_result):
+        assert installer._detect_gpu() == "cu118"
+
+
+def test_detect_gpu_cuda_126():
+    """CUDA 12.6 driver selects cu126."""
+    installer = Installer("/tmp/test")
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = _nvidia_smi_output("12.6")
+    with patch("funasr_server.installer.subprocess.run", return_value=mock_result):
+        assert installer._detect_gpu() == "cu126"
+
+
+def test_detect_gpu_cuda_too_old():
+    """CUDA 10.2 is too old — falls back to cpu."""
+    installer = Installer("/tmp/test")
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = _nvidia_smi_output("10.2")
+    with patch("funasr_server.installer.subprocess.run", return_value=mock_result):
+        assert installer._detect_gpu() == "cpu"
+
+
+def test_detect_gpu_macos():
+    """macOS always returns 'cpu'."""
+    installer = Installer("/tmp/test")
+    with patch("funasr_server.installer.platform.system", return_value="Darwin"):
+        assert installer._detect_gpu() == "cpu"
+
+
+def test_detect_gpu_unparseable():
+    """nvidia-smi succeeds but output is unparseable — defaults to cu128."""
+    installer = Installer("/tmp/test")
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = b"some weird output without version"
+    with patch("funasr_server.installer.subprocess.run", return_value=mock_result):
+        assert installer._detect_gpu() == "cu128"
+
+
+def test_generate_pyproject_cpu():
+    """CPU machine generates pyproject with pytorch-cpu index."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        runtime_dir = Path(tmpdir) / "runtime"
+        runtime_dir.mkdir()
+        installer = Installer(str(runtime_dir))
+        installer._region = "intl"
+        with patch.object(installer, "_detect_gpu", return_value="cpu"), \
+             patch("funasr_server.installer.platform.system", return_value="Linux"):
+            installer._generate_pyproject()
+        content = (runtime_dir / "pyproject.toml").read_text()
+        assert "pytorch-cpu" in content
+        assert "download.pytorch.org/whl/cpu" in content
+        assert "cu1" not in content
+
+
+def test_generate_pyproject_cuda():
+    """CUDA machine generates pyproject with correct index."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        runtime_dir = Path(tmpdir) / "runtime"
+        runtime_dir.mkdir()
+        installer = Installer(str(runtime_dir))
+        installer._region = "intl"
+        with patch.object(installer, "_detect_gpu", return_value="cu124"):
+            installer._generate_pyproject()
+        content = (runtime_dir / "pyproject.toml").read_text()
+        assert "pytorch-cu124" in content
+        assert "download.pytorch.org/whl/cu124" in content
+
+
+def test_generate_pyproject_macos():
+    """macOS generates pyproject without explicit torch index."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        runtime_dir = Path(tmpdir) / "runtime"
+        runtime_dir.mkdir()
+        installer = Installer(str(runtime_dir))
+        installer._region = "intl"
+        with patch.object(installer, "_detect_gpu", return_value="cpu"), \
+             patch("funasr_server.installer.platform.system", return_value="Darwin"):
+            installer._generate_pyproject()
+        content = (runtime_dir / "pyproject.toml").read_text()
+        assert "torch>=2.0.0" in content
+        # macOS should NOT have explicit index (uses PyPI default with MPS)
+        assert "pytorch-cpu" not in content
+        assert "pytorch-cu" not in content
+
+
+def test_generate_pyproject_cn_cpu():
+    """China region CPU uses Chinese mirror for torch."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        runtime_dir = Path(tmpdir) / "runtime"
+        runtime_dir.mkdir()
+        installer = Installer(str(runtime_dir))
+        installer._region = "cn"
+        with patch.object(installer, "_detect_gpu", return_value="cpu"), \
+             patch("funasr_server.installer.platform.system", return_value="Linux"):
+            installer._generate_pyproject()
+        content = (runtime_dir / "pyproject.toml").read_text()
+        assert "mirror.sjtu.edu.cn" in content
+
+
+def test_generate_pyproject_cn_cuda():
+    """China region CUDA uses Chinese mirror for torch."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        runtime_dir = Path(tmpdir) / "runtime"
+        runtime_dir.mkdir()
+        installer = Installer(str(runtime_dir))
+        installer._region = "cn"
+        with patch.object(installer, "_detect_gpu", return_value="cu126"):
+            installer._generate_pyproject()
+        content = (runtime_dir / "pyproject.toml").read_text()
+        assert "mirror.sjtu.edu.cn/pytorch-wheels/cu126" in content
+        assert "pytorch-cu126" in content
 
 
 def test_install_calls_steps():
